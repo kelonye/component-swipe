@@ -5,13 +5,11 @@
 
 var transitionend = require('transitionend-property');
 var transform = require('transform-property');
-var touchAction = require('touchaction-property');
 var has3d = require('has-translate3d');
 var style = require('computed-style');
 var Emitter = require('emitter');
 var event = require('event');
 var events = require('events');
-var indexOf = require('indexof');
 var min = Math.min;
 var max = Math.max;
 
@@ -31,8 +29,7 @@ module.exports = Swipe;
 function Swipe(el) {
   if (!(this instanceof Swipe)) return new Swipe(el);
   if (!el) throw new TypeError('Swipe() requires an element');
-  this.child = el.children[0];
-  this.touchAction('none');
+  this.child = this.getChildren(el)[0];
   this.currentEl = this.children().visible[0];
   this.currentVisible = 0;
   this.current = 0;
@@ -41,7 +38,7 @@ function Swipe(el) {
   this.interval(5000);
   this.duration(300);
   this.fastThreshold(200);
-  this.threshold(0.5);
+  this.threshold(.5);
   this.show(0, 0, { silent: true });
   this.bind();
 }
@@ -51,6 +48,23 @@ function Swipe(el) {
  */
 
 Emitter(Swipe.prototype);
+
+
+/**
+  * Return an element's children minus ember-metamorphs
+  *
+  */
+Swipe.prototype.getChildren = function(el){
+  var ret = [];
+  for (var i = 0; i < el.children.length; i++) {
+    var _el = el.children[i];
+    if (_el.tagName != 'SCRIPT'){
+      ret.push(_el);
+    }
+  }
+  return ret;
+};
+
 
 /**
  * Set the swipe threshold to `n`.
@@ -123,22 +137,14 @@ Swipe.prototype.refresh = function(){
 
 Swipe.prototype.bind = function(){
   this.events = events(this.child, this);
-  this.docEvents = events(document, this);
-
-  // standard mouse click events
   this.events.bind('mousedown', 'ontouchstart');
   this.events.bind('mousemove', 'ontouchmove');
-  this.docEvents.bind('mouseup', 'ontouchend');
-
-  // W3C touch events
   this.events.bind('touchstart');
   this.events.bind('touchmove');
-  this.docEvents.bind('touchend');
 
-  // MS IE touch events
-  this.events.bind('PointerDown', 'ontouchstart');
-  this.events.bind('PointerMove', 'ontouchmove');
-  this.docEvents.bind('PointerUp', 'ontouchstart');
+  this.docEvents = events(document, this);
+  this.docEvents.bind('mouseup', 'ontouchend');
+  this.docEvents.bind('touchend');
 };
 
 /**
@@ -159,15 +165,18 @@ Swipe.prototype.unbind = function(){
  */
 
 Swipe.prototype.ontouchstart = function(e){
+  var touches = e.changedTouches;
+  if (!touches) return;
+  touches = touches[0];
+
   this.transitionDuration(0);
   this.dx = 0;
   this.updown = null;
 
-  var touch = this.getTouch(e);
   this.down = {
-    x: touch.pageX,
-    y: touch.pageY,
-    at: new Date()
+    x: touches.pageX,
+    y: touches.pageY,
+    at: new Date
   };
 };
 
@@ -183,20 +192,21 @@ Swipe.prototype.ontouchstart = function(e){
 
 Swipe.prototype.ontouchmove = function(e){
   if (!this.down || this.updown) return;
-  var touch = this.getTouch(e);
-
-  // TODO: ignore more than one finger
-  if (!touch) return;
+  var touches = e.changedTouches;
+  if (!touches) return;
+  // ignore more than one finger
+  if (e.touches.length > 1) return;
+  touches = touches[0];
 
   var down = this.down;
-  var x = touch.pageX;
+  var x = touches.pageX;
   var w = this.childWidth;
   var i = this.currentVisible;
   this.dx = x - down.x;
 
   // determine dy and the slope
   if (null == this.updown) {
-    var y = touch.pageY;
+    var y = touches.pageY;
     var dy = y - down.y;
     var slope = dy / this.dx;
 
@@ -226,15 +236,17 @@ Swipe.prototype.ontouchmove = function(e){
 Swipe.prototype.ontouchend = function(e){
   e.stopPropagation();
   if (!this.down) return;
-  var touch = this.getTouch(e);
+  var touches = e.changedTouches;
+  if (!touches) return;
+  touches = touches[0];
 
   // setup
   var dx = this.dx;
-  var x = touch.pageX;
+  var x = touches.pageX;
   var w = this.childWidth;
 
   // < 200ms swipe
-  var ms = new Date() - this.down.at;
+  var ms = new Date - this.down.at;
   var threshold = ms < this._fastThreshold ? w / 10 : w * this._threshold;
   var dir = dx < 0 ? 1 : 0;
   var half = Math.abs(dx) >= threshold;
@@ -416,7 +428,7 @@ Swipe.prototype.show = function(i, ms, options){
  */
 
 Swipe.prototype.children = function(){
-  var els = this.child.children;
+  var els = this.getChildren(this.child);
 
   var ret = {
     all: els,
@@ -470,34 +482,20 @@ Swipe.prototype.translate = function(x){
 };
 
 /**
- * Sets the "touchAction" CSS style property to `value`.
+ * Return index of `el` in `els`.
  *
+ * @param {Array} els
+ * @param {Element} el
+ * @return {Number}
  * @api private
  */
 
-Swipe.prototype.touchAction = function(value){
-  var s = this.child.style;
-  if (touchAction) {
-    s[touchAction] = value;
+function indexOf(els, el) {
+  for (var i = 0; i < els.length; i++) {
+    if (els[i] == el) return i;
   }
-};
-
-/**
- * Gets the appropriate "touch" object for the `e` event. The event may be from
- * a "mouse", "touch", or "Pointer" event, so the normalization happens here.
- *
- * @api private
- */
-
-Swipe.prototype.getTouch = function(e){
-  // "mouse" and "Pointer" events just use the event object itself
-  var touch = e;
-  if (e.changedTouches && e.changedTouches.length > 0) {
-    // W3C "touch" events use the `changedTouches` array
-    touch = e.changedTouches[0];
-  }
-  return touch;
-};
+  return -1;
+}
 
 /**
  * Check if `el` is visible.
